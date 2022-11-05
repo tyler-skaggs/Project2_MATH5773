@@ -1,0 +1,173 @@
+---
+title: "MATH5773Proj2"
+output: 
+  rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{MATH5773Proj2}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(MATH5773Proj2Skag0011)
+```
+## Intro
+The functions in this package are used to help conduct an analysis on data with qualitative and quantitative data. Specifically, these functions were designed to work with models of exactly 1 quantitative independent variable and 1 independent qualitative variable. The `BROWSER` and `SLUDGE` data sets are like this and will be used in this analysis.
+
+## The First Funciton: `ResAn()`
+```{r}
+ResAn <- function(model, data){
+  data = data.frame(data)
+  ylm <- lm(model, data)
+
+  X <- model.matrix(ylm)
+  P <- X %*% solve(t(X) %*% X) %*% t(X)
+
+  residuals <- resid(ylm)
+
+  #Plot of Residuals
+  g1 <- ggplot(data.frame(Index = 1:length(residuals), residuals), aes(x = Index, y = residuals)) +
+    geom_point(aes(color = abs(residuals), size = abs(residuals))) +
+    geom_segment(aes(xend = Index, yend = 0)) +
+    scale_color_continuous(low = "green", high = "red") +
+    geom_hline(yintercept = 0) +
+    theme_bw() + ggtitle("Residuals")
+
+  #Cook's Distance
+  g2 <- ggplot(ylm, aes(seq_along(.cooksd), .cooksd)) +
+    geom_col() + ggtitle("Cook's Distance")
+
+  print(g1 + g2)
+
+  # Looking at influence measures
+  infl <- influence.measures(ylm)
+  ## Index of which item it is (row)
+  Index <- which(infl$is.inf == TRUE) %% dim(infl$is.inf)[1]
+  ##Finding the type of influence caught (column)
+  InfType <- colnames(as.data.frame(infl$is.inf))[ceiling(which(infl$is.inf == TRUE)/dim(infl$is.inf)[1])]
+
+  my_list <- list(InfMeasures = data.frame(Index, InfType)[order(Index, decreasing = FALSE), ],
+                  anova = anova(ylm), resids = residuals,  Fval = summary(ylm)$fstatistic,
+                  P = P, r.sqd = summary(ylm)$adj.r.squared, AIC = AIC(ylm))
+
+  return(invisible(my_list))
+}
+```
+
+
+## The Second Function `DataSummary()`
+```{r}
+DataSummary <- function(Y, X, XC, data){
+  ##################### SETUP ########################
+
+  data <- as.data.frame(data)
+
+  Ydat <- as.vector(data[[Y]]) #Data for y
+  Xdat <- as.vector(data[[X]]) #Quantitative data
+  XCdat <- as.vector(data[[XC]]) #Qualitative Data
+
+  max_x = Xdat[which.max(Xdat)] #Largest quantitative data
+
+  factors <- unique(unlist(XCdat))
+  factors = (factors[order(factors)]) #Ordered vector of factors
+
+
+  ##################### Calculations ########################
+  ylm <- lm(Ydat ~ Xdat + XCdat)
+
+
+  ## Summary of each group
+  GroupSum <- vector(mode = "list", length = length(factors))
+  for(i in 1:length(factors)){
+    tempdata <- Ydat[which(XCdat == factors[i])]
+    GroupSum[[i]] = summary(tempdata)
+  }
+
+
+  ##################### Plotting ########################
+  #Data plot
+  g1 <- ggplot(data, aes(x = Xdat, y = Ydat)) +
+    geom_point(aes(size = 1.5, colour = factor(XCdat))) +
+    labs(x = X, y = Y) + ggtitle("Plot of Data")
+
+
+  # Box Plots
+  g2 <- ggplot(data, aes(x = XCdat, y = Ydat, fill = XCdat)) +
+    geom_boxplot(aes(group = XCdat)) +
+    geom_point() + labs(x = XC, y = Y, fill = XC) +
+    ggtitle("Barplots of Groups")
+
+  #Adding regression lines
+  betas <- coef(ylm)
+  for(i in 3:length(betas)){
+    g1 = g1 + geom_abline(intercept = betas[1] + betas[i], slope = betas[2]) +
+      annotate(geom="text", label=factors[i-1], x=max_x, y=betas[1] + betas[i] + betas[2]*max_x, vjust=1)
+  }
+  g1 = g1 + geom_abline(intercept = betas[1], slope = betas[2], col = "red") +
+    annotate(geom="text", label=factors[1], x=max_x, y=betas[1] + betas[2]*max_x, vjust=0)
+
+  print(g1 + g2)
+
+  ## Return
+  my_list <- list(betas = betas, CI = confint(ylm),
+                  lmsum = summary(ylm), datasum = summary(data), groupSum = GroupSum)
+  return(invisible(my_list))
+}
+```
+
+
+## Looking at the `SLUGE` Data set
+Let's start with the first function:
+```{r, out.width="100%", fig.width=15, fig.height = 6, fig.align='center'}
+t <- ResAn(CH4 ~ TIME + VHA, data = SLUDGE)
+t$InfMeasures
+t$r.sqd
+1 - pf(t$Fval[1], t$Fval[2], t$Fval[3])
+```
+At a quick glance, we can see the adjusted $R^2$ value for this model to look to see if this model is helpful to begin with. Looking at the $p$-value from the f-test, we can also see that this model has utility in predicting CH4. What we can look at to better understand the data is the influence output, here we see that there is not a lot that is considered to have high influence, specifically `influence.measures()` tells us that the 23rd item in the `SLUDGE` data set is potentially a large influence based on the `cov.r` metric. This does not mean this datum should be removed, but it should at least be examined a bit further. Looking at the plots, we can see more about this 23rd item, on the left we see the residuals vs predicted, and as expected the 23rd item is notably higher than the rest (as also seen by the dark red and large bulb). This concern is carried further when looking at cook's distance where, once again, the 23rd item is significantly higher than the rest of the data.
+
+Now, let's look further at the data set with our second function:
+
+```{r, out.width="100%", fig.width=15, fig.height = 6, fig.align='center'}
+t <- DataSummary("CH4", "TIME", "VHA-Added", SLUDGE)
+t$datasum
+```
+Here, we see two plots. The first on the left is a plot of the data (colored by group on the legend) and we have two lines. The red line signifies the baseline ("NO" in this case) for this model (chosen alphabetically). We also have a barplot on the right of the two categories in this data. At a glance, these lines seem reasonable at predicting the data for each group (analysis from the first function helps us actually decide how "good" the model is). Do note, that the slope of these lines is depending on the baseline of this model. Let's look further at the $\beta_k$ in the following model $$E(y) = \beta_0 + \beta_1 x_1 + \beta_2 x_2 $$ where $x_1$ is the variable for `TIME` and $x_2$ is a dummy variable such that $$x_2 = \begin{cases} 1, \text{ if  VHA-Added = yes} \\ 0, \text{ otherwise} \end{cases}$$
+
+Here are the betas and means of each group:
+```{r}
+t$betas
+t$groupSum
+```
+What we notice is that the mean of the baseline is 99.23, the mean of the group "NO" is 178.43. Then we can calculate $\beta_2 = \bar{y_N} - \bar{y_Y} = 178.43 - 99.23 = 79.288$. We can see in the next section that even with more categories, it still holds that the beta for each dummy variable is the mean of that group minus the mean of the baseline.
+
+## Looking at the `BROWSER` Data set
+```{r, out.width="100%", fig.width=15, fig.height = 6, fig.align='center'}
+t <- ResAn(TIME ~ NUMBER + BROWSER, BROWSER)
+1 - pf(t$Fval[1], t$Fval[2], t$Fval[3])
+t$r.sqd
+t$InfMeasures
+```
+Looking at the p-value for the f test, we can see that the model does have utility, the $R^2$ also seems to indicate that it is and okay model. However, looking at the influence measures reported, we see that some datum could be problematic. Specifically, the 4th and 14th index appear multiple, times. Let's look at these on the two plots. Here, we do infact see that these data are quite far from the predicted and produce a large value for cook's distance. This model should be looked at deeper, especially the t-test of the beta values.
+
+```{r, out.width="100%", fig.width=15, fig.height = 6, fig.align='center'}
+t <- DataSummary("TIME", "NUMBER", "BROWSER", BROWSER)
+t$lmsum
+```
+Looking at the summary from lm provided by this function, we can see that many of the $\beta$ values may potentially be 0. If we look at the plot on the left, we can see that the slope given from the baseline (Chrome browser) may actually not be the best predictor for the other groups in this case, especially when trying to predict Opera which if we look on the right has a larger variance within its group and much large mean or Firefox which has the opposite issue. Similar to the last data set, let's look further at the following model $$ E(y) = \beta_0 + \beta_1 x_1 +\beta_2 x_2 + \beta_3 x_3 + \beta_4 x_4$$ Where $x_2, x_3, x_4$ are dummy variable that are 1 if we are using Firefox, Opera, or Safari respectively.
+```{r}
+t$betas
+t$groupSum
+```
+Here, we have the baseline mean for chrome as $\bar{y}_C = 7.25$. The other means are as follows: $\bar{y}_F = 7.125$, $\bar{y}_O = 13.25$, and $\bar{y}_S = 6.25$. We can then see, just like in the last section, 
+$$\beta_2 = \bar{y}_F - \bar{y}_C = 7.125 - 7.25 = -0.125$$
+$$\beta_3 = \bar{y}_O - \bar{y}_C = 13.25 - 7.25 = 6$$
+$$\beta_4 = \bar{y}_S - \bar{y}_C = 6.25 - 7.25 = -1$$
+We can then see that the change between the line of each group is simply just a constant change in the intercept, which is expected as they all have the same slope given by $\beta_1$ which was constructed from the baseline. In this model, it doesn't seem like this baseline would have been the best choice, or that a model of this type is the best.
